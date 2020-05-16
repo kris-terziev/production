@@ -1,31 +1,20 @@
 variables:
+    GIT_STRATEGY: clone
     DOCKER_DRIVER: overlay2
     DOCKER_TLS_CERTDIR: "/certs"
     DOCKER_HOST: "tcp://docker:2375"
-    # shopware 6 variables
-    MYSQL_ROOT_PASSWORD: root
+    # shopware 6
     WEB_DOCUMENT_ROOT: '$CI_PROJECT_DIR/public'
-    APP_URL: http://localhost:8000
-    INSTANCE_ID: ""
-    MAILER_URL: smtp://localhost:25?encryption=&auth_mode=
-    SHOPWARE_CDN_STRATEGY_DEFAULT: id
-    BLUE_GREEN_DEPLOYMENT: 1
-    SHOPWARE_ES_ENABLED: 1
-    SHOPWARE_ES_HOSTS: elasticsearch:9200
-    SHOPWARE_ES_INDEXING_ENABLED: 1
-    SHOPWARE_ES_INDEX_PREFIX: sw
+    MYSQL_ROOT_PASSWORD: root
     # The platform branch used to split the repos
     PLATFORM_BRANCH: "6.2"
-    # minimum stability of the new version. current: v6.2.0-RC2 -> if rc: v6.2.0-RC3, if stable: v6.2.0
+    # minimum stability of the new version. Example: v6.2.0-RC2 -> if rc: v6.2.0-RC3, if stable: v6.2.0
     MINIMUM_STABILITY: "stable"
-    TEST_SUITES: "administration framework storefront checkout content system elasticsearch docs migration"
-    SPLIT_REPOS: "Administration Storefront Core Elasticsearch Recovery"
-    PACKAGE_BASE_URL: "https://releases.shopware.com/sw6/"
 
 include:
     -   local: .gitlab-ci/release.yml
 
-Test-Package:
+Build Test Package:
     stage: build
     tags:
         - release
@@ -37,6 +26,8 @@ Test-Package:
         -   name: docker:18.09.7-dind
             alias: docker
     variables:
+        GIT_STRATEGY: none
+        SPLIT_REPOS: "Administration Storefront Core Elasticsearch Recovery"
         SPLITSH: /opt/splitsh-lite
     cache:
         key: "package_$PLATFORM_BRANCH"
@@ -59,6 +50,12 @@ Test-Package:
         - apt-get install -y --download-only $DEB_PACKAGES
         - apt-get install -y $DEB_PACKAGES
         - npm config set cache $PWD/.npm
+        # we need to do the checkout to have correct permissions. See: https://gitlab.com/gitlab-org/gitlab-runner/-/issues/1736
+        - umask 0022
+        - git init .
+        - git remote add origin ${CI_REPOSITORY_URL}
+        - git fetch
+        - git checkout -f -q ${CI_COMMIT_SHA}
         - composer config --global  cache-dir $PWD/.composer
         # install helper tools
         - composer install --working-dir=.gitlab-ci/tools
@@ -87,9 +84,12 @@ Test-Package:
         # build test package
         - .gitlab-ci/build-nightly.sh
         - docker build . -t "${CI_REGISTRY_IMAGE}:${IMAGE_TAG}"
+        - mkdir artifacts || true
+        - chmod 777 artifacts || true
         # create package archive file
         - docker run -v $PWD/artifacts:/artifacts --entrypoint=bin/package.sh ${CI_REGISTRY_IMAGE}:${IMAGE_TAG}
         - mv artifacts/install.tar.xz artifacts/install_${IMAGE_TAG}.tar.xz
+        - echo ${TAG} > artifacts/TAG
     artifacts:
         expire_in: 1 week
         paths:
@@ -102,8 +102,6 @@ Test-Package:
     only:
         refs:
             - schedules
-    variables:
-        GIT_STRATEGY: none
     services:
         -   name: mariadb:10.3
             alias: mysql
@@ -111,26 +109,24 @@ Test-Package:
             alias: elasticsearch
             command: [ "bin/elasticsearch", "-Expack.security.enabled=false", "-Ediscovery.type=single-node" ]
 
-.e2e_base:
-    extends: .test_base
-    tags:
-        - release
-    cache:
-        key: "e2e_$PLATFORM_BRANCH"
-        paths:
-            - .npm
-            - .cypress
-        policy: pull-push
-    before_script:
-        - export CYPRESS_CACHE_FOLDER="${PWD}/.cypress"
-        - npm config set cache $PWD/.npm
-
 .unit_base:
     extends: .test_base
     variables:
-        GIT_STRATEGY: none
+        TEST_SUITES: "administration framework storefront checkout content system elasticsearch docs migration"
+        # shopware 6 env variables
         DATABASE_URL: mysql://root:root@mysql:3306/sw6
+        APP_URL: http://localhost:8000
+        INSTANCE_ID: ""
+        MAILER_URL: smtp://localhost:25?encryption=&auth_mode=
+        SHOPWARE_CDN_STRATEGY_DEFAULT: id
+        BLUE_GREEN_DEPLOYMENT: 1
+        SHOPWARE_ES_ENABLED: 1
+        SHOPWARE_ES_HOSTS: elasticsearch:9200
+        SHOPWARE_ES_INDEXING_ENABLED: 1
+        SHOPWARE_ES_INDEX_PREFIX: sw
+        GIT_STRATEGY: none
     before_script:
+        - export TAG=$(cat artifacts/TAG)
         - cp artifacts/install*.tar.xz install.tar.xz
         - tar -xf install.tar.xz
         - rm install.tar.xz
@@ -153,6 +149,7 @@ Test-Package:
         - echo -e "</testsuites>" >> "artifacts/phpunit.junit.xml"
         - '[[ $FAILED -eq 0 ]]'
     artifacts:
+        when: always
         expire_in: 1 week
         paths:
             - artifacts/*.junit.xml
@@ -199,8 +196,35 @@ Unit MariaDB 10.4:
             alias: elasticsearch
             command: [ "bin/elasticsearch", "-Expack.security.enabled=false", "-Ediscovery.type=single-node" ]
 
-E2E Installer:
+.e2e_base:
+    extends: .test_base
+    services:
+        -   name: mysql:5.7
+            alias: mysql
+        -   name: elastic/elasticsearch:7.1.1
+            alias: elasticsearch
+            command: [ "bin/elasticsearch", "-Expack.security.enabled=false", "-Ediscovery.type=single-node" ]
+    tags:
+        - release
+    cache:
+        key: "e2e_$PLATFORM_BRANCH"
+        paths:
+            - .npm
+            - .cypress
+        policy: pull-push
+    artifacts:
+        expire_in: 1 week
+        paths:
+            - vendor/shopware/recovery/Test/e2e/artifacts/
+
+Install:
     extends: .e2e_base
+    variables:
+        GIT_STRATEGY: none
+    before_script:
+        - export TAG=$(cat artifacts/TAG)
+        - export CYPRESS_CACHE_FOLDER="${PWD}/.cypress"
+        - npm config set cache $PWD/.npm
     script:
         - cp artifacts/install*.tar.xz install.tar.xz
         - tar -xf install.tar.xz
@@ -209,8 +233,116 @@ E2E Installer:
         - apt-get update && apt-get install -y xvfb
         - cd vendor/shopware/recovery/Test/e2e
         - npm clean-install
-        - $(npm bin)/cypress run --browser chrome --config baseUrl=http://localhost:8000 --config numTestsKeptInMemory=0
+        - $(npm bin)/cypress run
+            --browser chrome --config baseUrl=http://localhost:8000,numTestsKeptInMemory=0
+            --env expectedVersion=$TAG
+            --spec cypress/integration/installer/basic.spec.js
+
+.e2e_update_base:
+    extends: .e2e_base
+    before_script:
+        # delete everything but the caches and the .gitlab-ci dir
+        - rm -Rf $(ls -a | grep -vE '^(\.gitlab-ci|\.cypress|\.npm|artifacts|\.\.?)$') || true
+        - npm config set cache $PWD/.npm
+        - export CYPRESS_CACHE_FOLDER="${PWD}/.cypress"
+        - export TAG=$(cat artifacts/TAG)
+        - '[[ -n $E2E_INSTALL_PACKAGE_URL && -n $E2E_TEST_DATA_FILE ]]'
+        - curl ${E2E_INSTALL_PACKAGE_URL} --silent -o install
+        - 'if [ ${E2E_INSTALL_PACKAGE_URL: -4} == ".zip" ]; then unzip -qqo install; else tar -xf install; fi'
+        - rm install
+        - export E2E_TEST_DATA_URL="${E2E_TEST_DATA_BASE_URL}/${E2E_TEST_DATA_FILE}"
+        - curl ${E2E_TEST_DATA_URL} --silent -o test_data
+        - 'if [ ${E2E_TEST_DATA_URL: -4} == ".zip" ]; then unzip -qqo test_data; else tar -xf test_data; fi'
+        - rm test_data
+        # import test data dump
+        - mysql -h mysql -u root -proot -e 'DROP DATABASE IF EXISTS `sw6_e2e_test`; CREATE DATABASE `sw6_e2e_test`; use `sw6_e2e_test`; source database.sql;'
+        # set update api base url to mock
+        - >
+            mysql -h mysql -u root -proot sw6_e2e_test -e 'UPDATE system_config SET configuration_value = "{\"_value\": \"http://localhost:3000\"}" WHERE configuration_key IN("core.store.apiUri", "core.update.apiUri")'
+        - bin/console system:generate-jwt-secret
+        - bin/console assets:install
+        - npm --prefix .gitlab-ci/e2e/ ci
+        # start update api mock
+        - DEBUG=* UPDATE_FILE_PATH=$CI_PROJECT_DIR/artifacts/update.zip FAKE_VERSION=$TAG node .gitlab-ci/e2e/update-api-mock.js &
+        # start webserver
+        - /entrypoint supervisord > /dev/null 2>&1 &
+        - apt-get update && apt-get install -y xvfb
+        # get e2e from install archive
+        - mkdir .gitlab-ci/e2e/test
+        - cp artifacts/install*.tar.xz .gitlab-ci/e2e/test/install.tar.xz
+        - cd .gitlab-ci/e2e/test
+        - tar -xvf install.tar.xz ./vendor/shopware/recovery/Test/e2e/
+        - mv ./vendor/shopware/recovery/Test/e2e/* .
+        - npm clean-install
+        - cd $CI_PROJECT_DIR
+        - chown -R application:application $CI_PROJECT_DIR
+
+
+.E2E Update:
+    extends: .e2e_update_base
+    script:
+        - cd .gitlab-ci/e2e/test/
+        - $(npm bin)/cypress run
+            --browser chrome --config baseUrl=http://localhost:8000,numTestsKeptInMemory=0
+            --env expectedVersion=$TAG
+            --spec cypress/integration/updater/auto-update.spec.js
+        - $(npm bin)/cypress run
+            --browser chrome --config baseUrl=http://localhost:8000,numTestsKeptInMemory=0
+            --env expectedVersion=$TAG
+            --spec cypress/integration/updater/storefront.spec.js
     artifacts:
+        when: always
         expire_in: 1 week
         paths:
-            - vendor/shopware/recovery/Test/e2e/artifacts/
+            - .gitlab-ci/e2e/test/artifacts/*
+            - var/log/*
+
+Manual Update 6.1.6:
+    extends: .e2e_update_base
+    variables:
+        E2E_INSTALL_PACKAGE_URL: https://releases.shopware.com/sw6/install_6.1.6_1589441426.zip
+        E2E_TEST_DATA_FILE: "v6.1.6_test_data.tar.xz"
+    script:
+        - unzip -qqo artifacts/update.zip
+        - chown -R application:application $CI_PROJECT_DIR
+        - cd vendor/shopware/recovery/Test/e2e/
+        - npm ci
+        - $(npm bin)/cypress run
+            --browser chrome --config baseUrl=http://localhost:8000,numTestsKeptInMemory=0
+            --env expectedVersion=$TAG
+            --spec cypress/integration/updater/manual-update.spec.js
+        - $(npm bin)/cypress run
+            --browser chrome --config baseUrl=http://localhost:8000,numTestsKeptInMemory=0
+            --env expectedVersion=$TAG
+            --spec cypress/integration/updater/storefront.spec.js
+    artifacts:
+        when: always
+        expire_in: 1 week
+        paths:
+            - vendor/shopware/recovery/Test/e2e/artifacts/*
+            - var/log/*
+
+Update 6.1.6:
+    extends: .E2E Update
+    variables:
+        E2E_INSTALL_PACKAGE_URL: https://releases.shopware.com/sw6/install_6.1.6_1589441426.zip
+        E2E_TEST_DATA_FILE: "v6.1.6_test_data.tar.xz"
+
+Update 6.1.6 (Mysql 8.0):
+    extends: .E2E Update
+    services:
+        -   name: mysql:8.0.19
+            alias: mysql
+            command: ["mysqld", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-authentication-plugin=mysql_native_password"]
+        -   name: elastic/elasticsearch:7.1.1
+            alias: elasticsearch
+            command: [ "bin/elasticsearch", "-Expack.security.enabled=false", "-Ediscovery.type=single-node" ]
+    variables:
+        E2E_INSTALL_PACKAGE_URL: https://releases.shopware.com/sw6/install_6.1.6_1589441426.zip
+        E2E_TEST_DATA_FILE: "v6.1.6_test_data.tar.xz"
+
+Update 6.2.0:
+    extends: .E2E Update
+    variables:
+        E2E_INSTALL_PACKAGE_URL: https://releases.shopware.com/sw6/install_6.2.0_1589874223.zip
+        E2E_TEST_DATA_FILE: "v6.1.6_test_data.tar.xz"
