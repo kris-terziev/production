@@ -106,6 +106,7 @@ Create-Release-Branch:
         MANY_REPO_GITHUB_URL: "https://api.github.com/repos/shopware/"
         TARGET_BRANCH: $PLATFORM_BRANCH
         CI_REPOSITORY_URL: "git@gitlab.shopware.com:/shopware/6/product/production"
+        CI_DEBUG_TRACE: "true"
     before_script:
         - apk --no-cache add openssh-client git bash jq composer php-dom php-tokenizer php-xmlwriter php-xml curl curl-dev
         - mkdir -p ~/.ssh/

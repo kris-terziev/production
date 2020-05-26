@@ -33,31 +33,31 @@ class ReleaseService
     {
         $tag = $this->config['tag'];
 
-        copy(
-            $this->config['repos']['core']['path'] . '/PLATFORM_COMMIT_SHA',
-            $this->config['projectRoot'] . '/PLATFORM_COMMIT_SHA'
-        );
-
-        $this->tagAndPushRepos($tag, $this->config['repos']);
-
-        $this->updateStability(
-            $this->config['projectRoot'] . '/composer.json',
-            $this->config['stability']
-        );
-
-        $this->updateComposerLock(
-            $this->config['projectRoot'] . '/composer.lock',
-            $tag,
-            $this->config['repos']
-        );
-
-        $this->createInstallerVersionFile($this->config['projectRoot'], $tag);
-
-        $this->createReleaseBranch(
-            $this->config['projectRoot'],
-            $tag,
-            $this->config['gitlabRemoteUrl']
-        );
+//        copy(
+//            $this->config['repos']['core']['path'] . '/PLATFORM_COMMIT_SHA',
+//            $this->config['projectRoot'] . '/PLATFORM_COMMIT_SHA'
+//        );
+//
+//        $this->tagAndPushRepos($tag, $this->config['repos']);
+//
+//        $this->updateStability(
+//            $this->config['projectRoot'] . '/composer.json',
+//            $this->config['stability']
+//        );
+//
+//        $this->updateComposerLock(
+//            $this->config['projectRoot'] . '/composer.lock',
+//            $tag,
+//            $this->config['repos']
+//        );
+//
+//        $this->createInstallerVersionFile($this->config['projectRoot'], $tag);
+//
+//        $this->createReleaseBranch(
+//            $this->config['projectRoot'],
+//            $tag,
+//            $this->config['gitlabRemoteUrl']
+//        );
 
         $this->openMergeRequest(
             $this->config['projectId'],
@@ -231,6 +231,6 @@ CODE;
             ]
         ];
 
-        $this->gitlabApiClient->request('POST', '/projects/' . $projectId . '/merge_requests', $requestOptions);
+        $this->gitlabApiClient->request('POST', 'projects/' . $projectId . '/merge_requests', $requestOptions);
     }
 }

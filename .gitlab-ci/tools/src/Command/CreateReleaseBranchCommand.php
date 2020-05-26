@@ -20,7 +20,7 @@ class CreateReleaseBranchCommand extends Command
     {
         $config = [
             'projectId' => $_SERVER['CI_PROJECT_ID'],
-            'gitlabBaseUri' => $_SERVER['CI_API_V4_URL'] . '/api/v4',
+            'gitlabBaseUri' => $_SERVER['CI_API_V4_URL'] . '/api/v4/',
             'gitlabRemoteUrl' => $_SERVER['CI_REPOSITORY_URL'],
             'gitlabApiToken' => $_SERVER['BOT_API_TOKEN'],
             'tag' => $tag,
@@ -62,6 +62,7 @@ class CreateReleaseBranchCommand extends Command
                 'Content-TYpe' => 'application/json'
             ]
         ]);
+        var_dump($client->getConfig());
 
         $releaseService = new ReleaseService($config, $client);
         $releaseService->release();
