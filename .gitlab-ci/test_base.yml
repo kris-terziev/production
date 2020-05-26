@@ -12,6 +12,7 @@
             command: [ "bin/elasticsearch", "-Expack.security.enabled=false", "-Ediscovery.type=single-node" ]
 
 .unit_base:
+    when: manual
     extends: .test_base
     variables:
         TEST_SUITES: "administration framework storefront checkout content system elasticsearch docs migration"
